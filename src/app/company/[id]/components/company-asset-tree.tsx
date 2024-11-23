@@ -6,14 +6,86 @@ import { Input } from "@/components/ui/input";
 import { Stack } from "@/components/ui/stack";
 import { getItemParentId, Tree, TreeNode } from "@/components/ui/tree";
 import { withSuspense } from "@/components/util/with-suspense";
-import { companyGetAssetsQueryConfig } from "@/packages/company/api/companyGetAssets";
-import { companyGetLocationQueryConfig } from "@/packages/company/api/companyGetLocations";
+import { memoize } from "@/lib/memoize";
+import {
+  CompanyAsset,
+  companyGetAssetsQueryConfig,
+} from "@/packages/company/api/companyGetAssets";
+import {
+  companyGetLocationQueryConfig,
+  CompanyLocation,
+} from "@/packages/company/api/companyGetLocations";
 import { useSuspenseQueries } from "@tanstack/react-query";
-import { useMemo } from "react";
 
 type Props = {
   companyId: string;
 };
+
+const getTree = memoize(
+  (args: {
+    companyId: string;
+    assets: CompanyAsset[];
+    locations: CompanyLocation[];
+  }) => {
+    const nodes: TreeNode[] = [];
+    const roots: TreeNode[] = [];
+
+    for (const asset of args.assets) {
+      const parentId = getItemParentId({ asset });
+      const node: TreeNode = {
+        id: asset.id,
+        label: asset.name,
+        parentId,
+      };
+
+      if (!parentId) {
+        roots.push(node);
+      }
+
+      nodes.push(node);
+    }
+
+    for (const location of args.locations) {
+      const parentId = getItemParentId({ location });
+
+      const node: TreeNode = {
+        id: location.id,
+        label: location.name,
+        parentId,
+      };
+
+      if (!parentId) {
+        roots.push(node);
+      }
+
+      nodes.push(node);
+    }
+
+    const buildTree = (roots: TreeNode[]) => {
+      const tree: TreeNode[] = [];
+
+      for (let i = 0; i < roots.length; i++) {
+        const children: TreeNode[] = [];
+
+        for (let j = 0; j < nodes.length; j++) {
+          if (nodes[j].parentId === roots[i].id) {
+            children.push(nodes[j]);
+          }
+        }
+
+        tree.push({
+          ...roots[i],
+          children: children.length ? buildTree(children) : undefined,
+        });
+      }
+
+      return tree;
+    };
+
+    return buildTree(roots);
+  },
+  (args) => args.companyId
+);
 
 export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
   companyId,
@@ -29,61 +101,11 @@ export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
     ],
   });
 
-  console.log({ companyAssetsQuery, companyLocationsQuery });
-
-  const treeNodes = useMemo(() => {
-    const allNodes: TreeNode[] = [
-      ...companyAssetsQuery.data.map((asset) => ({
-        id: asset.id,
-        label: asset.name,
-        parentId: getItemParentId({ asset }),
-        data: asset,
-      })),
-      ...companyLocationsQuery.data.map((location) => ({
-        id: location.id,
-        label: location.name,
-        parentId: getItemParentId({ location }),
-        data: location,
-      })),
-    ].toSorted((nodeA, nodeB) => (nodeA.label < nodeB.label ? 1 : -1));
-
-    const filterAndDelete = <T,>(
-      array: T[],
-      match: (element: T) => boolean
-    ) => {
-      const filtered: T[] = [];
-
-      for (let i = 0; i < array.length; i++) {
-        if (match(array[i])) {
-          filtered.push(...array.splice(i, 1));
-        }
-      }
-
-      return filtered;
-    };
-
-    const buildTree = (nodes: TreeNode[]) => {
-      const tree: TreeNode[] = [];
-
-      for (const node of nodes) {
-        const children = filterAndDelete(
-          allNodes,
-          (child) => child.parentId === node.id
-        );
-
-        tree.push({
-          ...node,
-          children: children.length ? buildTree(children) : undefined,
-        });
-      }
-
-      return tree;
-    };
-
-    const rootNodes = allNodes.filter((node) => !node.parentId);
-
-    return buildTree(rootNodes);
-  }, [companyAssetsQuery.data, companyLocationsQuery.data]);
+  const tree = getTree({
+    assets: companyAssetsQuery.data,
+    locations: companyLocationsQuery.data,
+    companyId,
+  });
 
   return (
     <Stack className="justify-between w-full">
@@ -98,7 +120,14 @@ export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
       </Card>
       <Card>
         <CardContent>
-          <Tree nodes={treeNodes} height={750} />
+          <Tree
+            id={companyId}
+            nodes={tree}
+            height={750}
+            itemCount={
+              companyAssetsQuery.data.length + companyLocationsQuery.data.length
+            }
+          />
         </CardContent>
       </Card>
     </Stack>

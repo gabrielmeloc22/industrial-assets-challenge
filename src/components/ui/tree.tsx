@@ -23,154 +23,97 @@ export const getItemParentId = (
   );
 };
 
-export type TreeNode<T = unknown> = {
-  id: string;
-  label: string;
-  icon?: ReactNode;
-  parentId?: string;
-  children?: TreeNode<T>[];
-  depth: number;
-  data: T;
-};
+const roboto = Roboto({ weight: ["400"], subsets: ["latin"] });
 
-export type TreeProps<T> = {
-  nodes: TreeNode<T>[];
+export type TreeProps = {
+  nodes: TreeNode[];
   height: number;
+  itemHeight?: number;
+  itemCount: number;
+  id: string;
 };
 
-type TreeWalkerProps = {
-  tree: TreeNode[];
-  hidden: Record<string, boolean>;
-};
+const DEFAULT_ROW_HEIGHT = 24;
 
-function TreeWalker(args: TreeWalkerProps) {
-  const roots = args.tree.filter((node) => !node.parentId);
-
-  return {
-    [Symbol.iterator]: function () {
-      const stack = roots.toReversed();
-
-      return {
-        next: function () {
-          const current = stack.pop();
-
-          if (!current) {
-            return { done: true, value: null };
-          }
-
-          if (!current.depth) {
-            current.depth = 0;
-          }
-
-          if (current.children && !args.hidden[current.id]) {
-            stack.push(
-              ...current.children.map((node) => ({
-                ...node,
-                depth: current.depth + 1,
-              }))
-            );
-          }
-
-          return { done: false, value: current };
-        },
-      };
-    },
-  };
-}
-
-type GetFlatTreeArgs = {
-  nodes: TreeNode[];
-  start: number;
-  size: number;
-  hidden: Record<string, boolean>;
-};
-
-const getFlatTree = (args: GetFlatTreeArgs) => {
-  const treeWalker = TreeWalker({ tree: args.nodes, hidden: args.hidden });
-  const flatTree: TreeNode[] = [];
-
-  let size = 0;
-
-  for (const node of treeWalker) {
-    if (!node || size === args.size + args.start) {
-      break;
-    }
-
-    size++;
-    flatTree.push(node);
-  }
-
-  return flatTree.slice(args.start, args.start + args.size + 1);
-};
-
-const roboto = Roboto({ weight: ["400"] });
-
-type GetTreeSizeArgs = {
-  nodes: TreeNode[];
-  hidden: Record<string, boolean>;
-};
-
-const getTreeSize = (args: GetTreeSizeArgs) => {
-  const treeWalker = TreeWalker({ tree: args.nodes, hidden: args.hidden });
-
-  const iterator = treeWalker[Symbol.iterator]();
-
-  let count = 0;
-
-  while (!iterator.next().done) {
-    count++;
-  }
-
-  return count;
-};
-
-export function Tree<T>({ nodes, height }: TreeProps<T>) {
+export function Tree({
+  id,
+  nodes,
+  itemHeight = DEFAULT_ROW_HEIGHT,
+  itemCount,
+  height,
+}: TreeProps) {
   const [start, setStart] = useState<number>(0);
   const [hidden, setHidden] = useState<Record<string, boolean>>({});
 
-  const treeSize = useMemo(
-    () => getTreeSize({ nodes, hidden }),
-    [nodes, hidden]
-  );
+  const [treeWalker, setTreeWalker] = useState<TreeWalker>();
 
-  const virtualTree = useMemo(
+  const size = Math.floor(height / itemHeight);
+  const overScan = Math.floor(size / 2);
+
+  const [tree] = useMemo(
     () =>
       getFlatTree({
-        nodes,
-        start: start,
-        size: height / 24,
+        start,
+        size,
+        id,
+        overScan,
         hidden,
+        treeWalker:
+          treeWalker ||
+          TreeWalker({ hidden, nodes: nodes as TreeNode_internal[] }),
+        onCompute: (treeWalker) => setTreeWalker(treeWalker),
       }),
-    [nodes, start, height, hidden]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hidden, start]
   );
 
   const handleScroll: UIEventHandler<HTMLDivElement> = (e) => {
-    const scrollPercentage = e.currentTarget.scrollTop / (treeSize * 24);
+    const scrollPercentage =
+      e.currentTarget.scrollTop / (itemCount * itemHeight);
 
-    setStart(Math.floor(scrollPercentage * treeSize));
+    const newStart = Math.floor(scrollPercentage * itemCount);
+
+    setStart(newStart);
   };
 
   const toggleClose = (id: string) => {
-    setHidden((hidden) => ({ ...hidden, [id]: !hidden[id] }));
+    const updatedHidden = { ...hidden };
+    const isHidden = hidden[id] === undefined;
+
+    if (isHidden) {
+      updatedHidden[id] = true;
+    } else {
+      delete updatedHidden[id];
+    }
+
+    setHidden(updatedHidden);
   };
 
   return (
     <div
       onScroll={handleScroll}
       className={cn(roboto.className, "overflow-hidden overflow-y-auto")}
-      style={{ height }}
+      style={{ height, display: "block" }}
     >
       <div
-        style={{ height: (treeSize - start) * 24, marginTop: start * 24 }}
-        className="flex flex-col"
+        style={{
+          height: itemCount * itemHeight,
+          position: "relative",
+        }}
       >
-        {virtualTree.map((node) => (
+        {tree.map((node, i) => (
           <TreeNode
+            style={{
+              position: "absolute",
+              top:
+                (Math.max(start - Math.floor(overScan / 2), 0) + i) *
+                itemHeight,
+            }}
             closed={hidden[node.id]}
             node={node}
-            height={24}
-            key={node.id}
-            toggleClose={toggleClose}
+            height={itemHeight}
+            key={i}
+            toggleClose={() => toggleClose(node.id)}
           />
         ))}
       </div>
@@ -180,18 +123,19 @@ export function Tree<T>({ nodes, height }: TreeProps<T>) {
 
 type TreeNodeProps = {
   height: number;
-  node: TreeNode;
-  toggleClose: (id: string) => void;
+  node: TreeNode_internal;
+  toggleClose: () => void;
   closed: boolean;
+  style: React.CSSProperties;
 };
 
-function TreeNode({ closed, toggleClose, node }: TreeNodeProps) {
-  const hasChildren = (node.children?.length || -1) > 0;
+function TreeNode({ height, closed, toggleClose, node, style }: TreeNodeProps) {
+  const hasChildren = !!node.children?.length;
 
   return (
     <div
       className="flex flex-col py-1"
-      style={{ marginLeft: `calc(${node.depth} * 1rem)` }}
+      style={{ marginLeft: `${node.depth * 16}px`, height, ...style }}
     >
       <button
         className={cn(
@@ -202,7 +146,7 @@ function TreeNode({ closed, toggleClose, node }: TreeNodeProps) {
         {hasChildren && (
           <ChevronDown
             size="md"
-            onClick={() => toggleClose(node.id)}
+            onClick={toggleClose}
             className={cn("transition-transform", closed && "rotate-180")}
           />
         )}
@@ -212,3 +156,184 @@ function TreeNode({ closed, toggleClose, node }: TreeNodeProps) {
     </div>
   );
 }
+
+type TreeNode_internal = {
+  id: string;
+  label: string;
+  icon?: ReactNode;
+  parentId?: string;
+  children?: TreeNode_internal[];
+  childrenCount: number;
+  depth: number;
+};
+
+export type TreeNode = Omit<
+  TreeNode_internal,
+  "depth" | "children" | "childrenCount"
+> & {
+  children?: TreeNode[];
+};
+
+type TreeWalkerArgs = {
+  nodes: TreeNode_internal[];
+  hidden: Record<string, boolean>;
+  tree?: TreeNode_internal[];
+  start?: number;
+};
+
+type TreeWalker = {
+  tree: TreeNode_internal[];
+  start: number;
+  stack: TreeNode_internal[];
+  complete: boolean;
+  [Symbol.iterator]: () => Iterator<TreeNode_internal>;
+};
+
+const TreeWalker = function TreeWalker(args: TreeWalkerArgs): TreeWalker {
+  return {
+    stack: args.nodes.filter((node) => !node.parentId),
+    start: args.start || 0,
+    tree: args.tree || [],
+    complete: false,
+    [Symbol.iterator]: function () {
+      const getTree = () => {
+        return this.tree;
+      };
+
+      const getStart = () => {
+        return this.start;
+      };
+
+      const setStart = (start: number) => {
+        this.start = start;
+      };
+
+      const getStack = () => {
+        return this.stack;
+      };
+
+      const setComplete = (complete: boolean) => {
+        this.complete = complete;
+      };
+
+      const getChildrenCount = (node: TreeNode_internal) => {
+        if (!node.children) {
+          return 0;
+        }
+
+        let count = 0;
+
+        for (const child of node.children) {
+          count += 1 + getChildrenCount(child);
+        }
+
+        return count;
+      };
+
+      return {
+        next: function () {
+          const tree = getTree();
+          const stack = getStack();
+          const start = getStart();
+
+          const current = stack.pop();
+
+          setStart(start + 1);
+
+          if (!current) {
+            setComplete(true);
+            return { done: true, value: null };
+          }
+
+          if (!current.depth) {
+            current.depth = 0;
+          }
+
+          current.childrenCount = getChildrenCount(current);
+
+          if (current.children) {
+            for (const child of current.children) {
+              stack.push({
+                ...child,
+                depth: current.depth + 1,
+              });
+            }
+          }
+
+          tree[start] = current;
+
+          return { done: false, value: current };
+        },
+      };
+    },
+  };
+};
+
+/**
+ *  Returns a flat array representation of the tree given a range
+ */
+type GetFlatTreeArgs = {
+  id: string;
+  start: number;
+  size: number;
+  hidden: Record<string, boolean>;
+  overScan: number;
+  treeWalker: TreeWalker;
+  onCompute?: (treeWalker: TreeWalker) => void;
+};
+
+const getFlatTree = (args: GetFlatTreeArgs) => {
+  const treeWalker = args.treeWalker;
+
+  const initialLength = treeWalker.tree.length;
+  const end = args.start + args.size + args.overScan;
+
+  const iterator = treeWalker[Symbol.iterator]();
+  const chunk: TreeNode_internal[] = [];
+
+  const size = args.size + args.overScan;
+
+  const isHidden = (id: string) => !!args.hidden[id];
+
+  let i = 0;
+  let hidden = 0;
+
+  while (i < size) {
+    if (i === treeWalker.tree.length && treeWalker.complete) {
+      break;
+    }
+
+    const getNode = (): TreeNode_internal | null => {
+      if (treeWalker.start < end) {
+        return iterator.next().value;
+      }
+
+      const node = treeWalker.tree[i + hidden + args.start];
+
+      if (!node) {
+        return null;
+      }
+
+      return node;
+    };
+
+    const node = getNode();
+
+    if (!node) {
+      break;
+    }
+
+    if (isHidden(node.id)) {
+      hidden += node.childrenCount;
+    }
+
+    chunk.push(node);
+    i++;
+  }
+
+  if (treeWalker.tree.length > initialLength) {
+    args.onCompute?.(treeWalker);
+  }
+
+  return [chunk, treeWalker] as const;
+};
