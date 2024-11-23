@@ -31,7 +31,7 @@ export function withSuspense<TProps>(
               </Card>
             )}
           >
-            <Component {...props} />
+            <Component {...(props as TProps & JSX.IntrinsicAttributes)} />
           </ErrorBoundary>
         )}
       </QueryErrorResetBoundary>
