@@ -43,7 +43,7 @@ export function Tree({
   height,
 }: TreeProps) {
   const [start, setStart] = useState<number>(0);
-  const [hidden, setHidden] = useState<Record<string, boolean>>({});
+  const [hidden, setHidden] = useState<Record<string, string>>({});
 
   const [treeWalker, setTreeWalker] = useState<TreeWalker>();
 
@@ -59,8 +59,7 @@ export function Tree({
         overScan,
         hidden,
         treeWalker:
-          treeWalker ||
-          TreeWalker({ hidden, nodes: nodes as TreeNode_internal[] }),
+          treeWalker || TreeWalker({ nodes: nodes as TreeNode_internal[] }),
         onCompute: (treeWalker) => setTreeWalker(treeWalker),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,14 +75,40 @@ export function Tree({
     setStart(newStart);
   };
 
-  const toggleClose = (id: string) => {
+  const toggleClose = (node: TreeNode_internal) => {
     const updatedHidden = { ...hidden };
-    const isHidden = hidden[id] === undefined;
+    const isHidden = !!hidden[node.id];
 
-    if (isHidden) {
-      updatedHidden[id] = true;
+    const getChildren = (node: TreeNode_internal) => {
+      const children: TreeNode_internal[] = [];
+
+      if (!node.children) {
+        return children;
+      }
+
+      for (const child of node.children) {
+        children.push(child);
+        children.push(...getChildren(child));
+      }
+
+      return children;
+    };
+
+    const children = getChildren(node);
+
+    // that logic does not preserve nested closed state
+    if (!isHidden) {
+      updatedHidden[node.id] = node.id;
+
+      for (const child of children) {
+        updatedHidden[child.id] = node.id;
+      }
     } else {
-      delete updatedHidden[id];
+      delete updatedHidden[node.id];
+
+      for (const child of children) {
+        delete updatedHidden[child.id];
+      }
     }
 
     setHidden(updatedHidden);
@@ -109,11 +134,11 @@ export function Tree({
                 (Math.max(start - Math.floor(overScan / 2), 0) + i) *
                 itemHeight,
             }}
-            closed={hidden[node.id]}
+            closed={hidden[node.id] === node.id}
             node={node}
             height={itemHeight}
             key={i}
-            toggleClose={() => toggleClose(node.id)}
+            toggleClose={() => toggleClose(node)}
           />
         ))}
       </div>
@@ -176,7 +201,6 @@ export type TreeNode = Omit<
 
 type TreeWalkerArgs = {
   nodes: TreeNode_internal[];
-  hidden: Record<string, boolean>;
   tree?: TreeNode_internal[];
   start?: number;
 };
@@ -276,7 +300,7 @@ type GetFlatTreeArgs = {
   id: string;
   start: number;
   size: number;
-  hidden: Record<string, boolean>;
+  hidden: Record<string, string>;
   overScan: number;
   treeWalker: TreeWalker;
   onCompute?: (treeWalker: TreeWalker) => void;
@@ -293,10 +317,10 @@ const getFlatTree = (args: GetFlatTreeArgs) => {
 
   const size = args.size + args.overScan;
 
-  const isHidden = (id: string) => !!args.hidden[id];
+  const isHidden = (id: string) =>
+    args.hidden[id] !== undefined && args.hidden[id] !== id;
 
   let i = 0;
-  let hidden = 0;
 
   while (i < size) {
     if (i === treeWalker.tree.length && treeWalker.complete) {
@@ -308,7 +332,7 @@ const getFlatTree = (args: GetFlatTreeArgs) => {
         return iterator.next().value;
       }
 
-      const node = treeWalker.tree[i + hidden + args.start];
+      const node = treeWalker.tree[i + args.start];
 
       if (!node) {
         return null;
@@ -323,11 +347,10 @@ const getFlatTree = (args: GetFlatTreeArgs) => {
       break;
     }
 
-    if (isHidden(node.id)) {
-      hidden += node.childrenCount;
+    if (!isHidden(node.id)) {
+      chunk.push(node);
     }
 
-    chunk.push(node);
     i++;
   }
 
