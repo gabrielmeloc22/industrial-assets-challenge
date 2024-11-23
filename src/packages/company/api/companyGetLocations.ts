@@ -47,7 +47,7 @@ export const COMPANY_GET_LOCATIONS_QUERY_KEY = "company.get.locations";
 export const companyGetLocationQueryConfig = (
   args: CompanyGetLocationsArgs
 ) => ({
-  queryKey: [COMPANY_GET_LOCATIONS_QUERY_KEY],
+  queryKey: [COMPANY_GET_LOCATIONS_QUERY_KEY, args.companyId],
   queryFn: async () => {
     const response = await companyGetLocations(args);
 

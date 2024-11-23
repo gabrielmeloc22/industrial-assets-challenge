@@ -48,7 +48,7 @@ export const companyGetAssets = async (
 export const COMPANY_GET_ASSETS_QUERY_KEY = "company.get.assets";
 
 export const companyGetAssetsQueryConfig = (args: CompanyGetAssetsArgs) => ({
-  queryKey: [COMPANY_GET_ASSETS_QUERY_KEY],
+  queryKey: [COMPANY_GET_ASSETS_QUERY_KEY, args.companyId],
   queryFn: async () => {
     const response = await companyGetAssets(args);
 
