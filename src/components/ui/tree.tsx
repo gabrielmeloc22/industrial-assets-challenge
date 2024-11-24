@@ -3,8 +3,16 @@
 import { cn } from "@/lib/utils";
 import { CompanyAsset } from "@/packages/company/api/companyGetAssets";
 import { CompanyLocation } from "@/packages/company/api/companyGetLocations";
+import FlexSearch from "flexsearch";
 import { Roboto } from "next/font/google";
-import { ReactNode, UIEventHandler, useMemo, useState } from "react";
+import {
+  ReactNode,
+  UIEventHandler,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ChevronDown } from "../icons/chevron-down";
 
 type GetItemParentIdArgs = {
@@ -30,18 +38,20 @@ export type TreeProps = {
   height: number;
   itemHeight?: number;
   itemCount: number;
-  id: string;
+  search?: string;
 };
 
 const DEFAULT_ROW_HEIGHT = 24;
 
 export function Tree({
-  id,
   nodes,
   itemHeight = DEFAULT_ROW_HEIGHT,
   itemCount,
   height,
+  search,
 }: TreeProps) {
+  const viewport = useRef<HTMLDivElement>(null);
+
   const [start, setStart] = useState<number>(0);
   const [hidden, setHidden] = useState<Record<string, string>>({});
 
@@ -50,20 +60,25 @@ export function Tree({
   const size = Math.floor(height / itemHeight);
   const overScan = Math.floor(size / 2);
 
-  const [tree] = useMemo(
+  useEffect(() => {
+    // setStart(0);
+    // viewport.current?.scrollTo({ top: 0 });
+  }, [search]);
+
+  const tree = useMemo(
     () =>
       getFlatTree({
         start,
         size,
-        id,
         overScan,
         hidden,
+        search,
         treeWalker:
           treeWalker || TreeWalker({ nodes: nodes as TreeNode_internal[] }),
         onCompute: (treeWalker) => setTreeWalker(treeWalker),
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [hidden, start]
+    [hidden, start, search]
   );
 
   const handleScroll: UIEventHandler<HTMLDivElement> = (e) => {
@@ -119,6 +134,7 @@ export function Tree({
       onScroll={handleScroll}
       className={cn(roboto.className, "overflow-hidden overflow-y-auto")}
       style={{ height, display: "block" }}
+      ref={viewport}
     >
       <div
         style={{
@@ -188,70 +204,136 @@ type TreeNode_internal = {
   icon?: ReactNode;
   parentId?: string;
   children?: TreeNode_internal[];
-  childrenCount: number;
   depth: number;
 };
 
-export type TreeNode = Omit<
-  TreeNode_internal,
-  "depth" | "children" | "childrenCount"
-> & {
+export type TreeNode = Omit<TreeNode_internal, "depth" | "children"> & {
   children?: TreeNode[];
 };
 
 type TreeWalkerArgs = {
   nodes: TreeNode_internal[];
   tree?: TreeNode_internal[];
-  start?: number;
+  offset?: number;
 };
 
 type TreeWalker = {
   tree: TreeNode_internal[];
-  start: number;
-  stack: TreeNode_internal[];
+  offset: number;
   complete: boolean;
+  _stack: TreeNode_internal[];
+  _idIndex: Record<string, TreeNode_internal>;
+  _searchIndex: FlexSearch.Index;
+  _addToIndex: (node: TreeNode_internal) => void;
+  _getSubtree: (node: TreeNode_internal, size?: number) => TreeNode_internal[];
+  search: (args: { value: string; size: number; offset: number }) => {
+    nodes: TreeNode_internal[];
+    total: number;
+  };
+  getNode: (id: string) => TreeNode_internal;
   [Symbol.iterator]: () => Iterator<TreeNode_internal>;
 };
 
 const TreeWalker = function TreeWalker(args: TreeWalkerArgs): TreeWalker {
   return {
-    stack: args.nodes.filter((node) => !node.parentId),
-    start: args.start || 0,
-    tree: args.tree || [],
     complete: false,
+    offset: args.offset || 0,
+    tree: args.tree || [],
+    _stack: args.nodes.filter((node) => !node.parentId),
+    _searchIndex: new FlexSearch.Index(),
+    _idIndex: {},
+    _addToIndex: function (node) {
+      this._searchIndex.add(node.id, node.label);
+      this._idIndex[node.id] = node;
+    },
+    _getSubtree: function (node, size) {
+      let count = 0;
+
+      const getSubtree = (node: TreeNode_internal, depth = 0) => {
+        if (count === size) {
+          return [];
+        }
+
+        const subtree: TreeNode_internal[] = [node];
+        count++;
+
+        if (!node.children) {
+          return subtree;
+        }
+
+        for (const child of node.children) {
+          if (count === size) {
+            break;
+          }
+          count++;
+
+          const node = { ...child, depth: depth + 1 };
+
+          subtree.push(...getSubtree(node, depth + 1));
+        }
+
+        return subtree;
+      };
+
+      return getSubtree(node, node.depth);
+    },
+    search: function (args) {
+      const searchResult = this._searchIndex.search(args.value, {
+        offset: args.offset,
+        limit: args.size,
+      });
+
+      const results: TreeNode_internal[] = [];
+
+      for (const id of searchResult) {
+        const node = this._idIndex[id];
+
+        if (node) {
+          results.push(node);
+
+          const subtree = this._getSubtree(node, args.size - results.length);
+
+          for (let i = 1; i < subtree.length; i++) {
+            const child = subtree[i];
+
+            this._addToIndex(child);
+            results.push(child);
+          }
+
+          if (results.length === args.size) {
+            break;
+          }
+        }
+      }
+
+      return { nodes: results, total: results.length };
+    },
+    getNode: function (id: string) {
+      return this._idIndex[id];
+    },
     [Symbol.iterator]: function () {
       const getTree = () => {
         return this.tree;
       };
 
       const getStart = () => {
-        return this.start;
+        return this.offset;
       };
 
       const setStart = (start: number) => {
-        this.start = start;
+        this.offset = start;
       };
 
       const getStack = () => {
-        return this.stack;
+        return this._stack;
       };
 
       const setComplete = (complete: boolean) => {
         this.complete = complete;
       };
 
-      const getChildrenCount = (node: TreeNode_internal) => {
-        if (!node.children) {
-          return 0;
-        }
-
-        let count = 0;
-
-        for (const child of node.children) {
-          count += 1 + getChildrenCount(child);
-        }
-
-        return count;
+      const addToIndex = (node: TreeNode_internal) => {
+        this._addToIndex(node);
       };
 
       return {
@@ -273,18 +355,17 @@ const TreeWalker = function TreeWalker(args: TreeWalkerArgs): TreeWalker {
             current.depth = 0;
           }
 
-          current.childrenCount = getChildrenCount(current);
-
           if (current.children) {
             for (const child of current.children) {
-              stack.push({
-                ...child,
-                depth: current.depth + 1,
-              });
+              const childNode = { ...child, depth: current.depth + 1 };
+
+              addToIndex(childNode);
+              stack.push(childNode);
             }
           }
 
           tree[start] = current;
+          addToIndex(current);
 
           return { done: false, value: current };
         },
@@ -297,12 +378,12 @@ const TreeWalker = function TreeWalker(args: TreeWalkerArgs): TreeWalker {
  *  Returns a flat array representation of the tree given a range
  */
 type GetFlatTreeArgs = {
-  id: string;
   start: number;
   size: number;
   hidden: Record<string, string>;
   overScan: number;
   treeWalker: TreeWalker;
+  search?: string;
   onCompute?: (treeWalker: TreeWalker) => void;
 };
 
@@ -310,53 +391,69 @@ const getFlatTree = (args: GetFlatTreeArgs) => {
   const treeWalker = args.treeWalker;
 
   const initialLength = treeWalker.tree.length;
-  const end = args.start + args.size + args.overScan;
 
   const iterator = treeWalker[Symbol.iterator]();
   const chunk: TreeNode_internal[] = [];
 
   const size = args.size + args.overScan;
 
-  const isHidden = (id: string) =>
-    args.hidden[id] !== undefined && args.hidden[id] !== id;
-
   let i = 0;
 
-  while (i < size) {
-    if (i === treeWalker.tree.length && treeWalker.complete) {
-      break;
+  const isHidden = (node: TreeNode_internal) =>
+    args.hidden[node.id] !== undefined && args.hidden[node.id] !== node.id;
+
+  const getNextNode = (): TreeNode_internal | null => {
+    if (!treeWalker.complete) {
+      iterator.next();
     }
 
-    const getNode = (): TreeNode_internal | null => {
-      if (treeWalker.start < end) {
-        return iterator.next().value;
-      }
+    const node = treeWalker.tree[i + args.start];
 
-      const node = treeWalker.tree[i + args.start];
+    if (!node) {
+      return null;
+    }
 
-      if (!node) {
-        return null;
-      }
+    return node;
+  };
 
-      return node;
-    };
-
-    const node = getNode();
+  while (chunk.length < size) {
+    const node = getNextNode();
+    i++;
 
     if (!node) {
       break;
     }
 
-    if (!isHidden(node.id)) {
-      chunk.push(node);
+    if (args.search) {
+      const searchResult = treeWalker.search({
+        value: args.search,
+        size,
+        offset: args.start,
+      });
+
+      if (
+        (searchResult.nodes.length < size && treeWalker.complete) ||
+        searchResult.nodes.length === size
+      ) {
+        for (const node of searchResult.nodes) {
+          chunk.push(node);
+        }
+        break;
+      }
+
+      continue;
     }
 
-    i++;
+    if (isHidden(node)) {
+      continue;
+    }
+
+    chunk.push(node);
   }
 
   if (treeWalker.tree.length > initialLength) {
     args.onCompute?.(treeWalker);
   }
 
-  return [chunk, treeWalker] as const;
+  return chunk;
 };

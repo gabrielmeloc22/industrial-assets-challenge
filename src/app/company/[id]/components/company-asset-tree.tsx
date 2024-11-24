@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Stack } from "@/components/ui/stack";
 import { getItemParentId, Tree, TreeNode } from "@/components/ui/tree";
 import { withSuspense } from "@/components/util/with-suspense";
+import { useDebounce } from "@/hooks/useDebounce";
 import { memoize } from "@/lib/memoize";
 import {
   CompanyAsset,
@@ -16,6 +17,7 @@ import {
   CompanyLocation,
 } from "@/packages/company/api/companyGetLocations";
 import { useSuspenseQueries } from "@tanstack/react-query";
+import { useState } from "react";
 
 type Props = {
   companyId: string;
@@ -90,6 +92,11 @@ const getTree = memoize(
 export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
   companyId,
 }) {
+  const [search, setSearch] = useState("");
+  // const searchParams = useSearchParams();
+  // const router = useRouter();
+  // const pathname = usePathname();
+
   const [companyAssetsQuery, companyLocationsQuery] = useSuspenseQueries({
     queries: [
       {
@@ -107,6 +114,18 @@ export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
     companyId,
   });
 
+  // const search = useDebounce(searchParams.get("search"), 150);
+  const debouncedSearch = useDebounce(search, 200);
+
+  const handleSearch = (search: string) => {
+    setSearch(search);
+    // const newParams = new URLSearchParams(searchParams);
+
+    // newParams.set("search", search);
+
+    // router.replace(`${pathname}?${newParams.toString()}`);
+  };
+
   return (
     <Stack className="justify-between w-full">
       <Card className="border-b-0">
@@ -114,6 +133,7 @@ export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
           <Input
             placeholder="Buscar Ativo ou Local"
             rightIcon={<MagnifyingClass />}
+            onChange={(e) => handleSearch(e.target.value)}
             className="border-none"
           />
         </CardContent>
@@ -121,9 +141,9 @@ export const CompanyAssetTree = withSuspense<Props>(function CompanyAssetTree({
       <Card>
         <CardContent>
           <Tree
-            id={companyId}
             nodes={tree}
             height={750}
+            search={debouncedSearch}
             itemCount={
               companyAssetsQuery.data.length + companyLocationsQuery.data.length
             }
